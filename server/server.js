@@ -8,8 +8,10 @@ dotenv.config();
 
 const app = express();
 app.use(cors({
-  origin: process.env.CLIENT_URL || "http://localhost:5173",
-  credentials: true
+  origin: [
+    "http://localhost:3000",
+    "https://abyss-chat.vercel.app"
+  ]
 }));
 
 // Rate limiting
@@ -19,10 +21,13 @@ const limiter = rateLimit({
 });
 app.use(limiter);
 
-const server = http.createServer(app);
+const server = createServer(app);
 const io = new Server(server, { 
-  cors: { 
-    origin: process.env.CLIENT_URL || "http://localhost:5173",
+  cors: {
+    origin: [
+      "http://localhost:3000",           // for local development
+      "https://abyss-chat.vercel.app"    // your Vercel frontend URL
+    ],
     methods: ["GET", "POST"],
     credentials: true
   },
