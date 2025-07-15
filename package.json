@@ -1,0 +1,11 @@
+{
+  "name": "abysschat-root",
+  "scripts": {
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "server": "cd server && npm start",
+    "client": "cd client && npm run dev"
+  },
+  "devDependencies": {
+    "concurrently": "^7.6.0"
+  }
+}
