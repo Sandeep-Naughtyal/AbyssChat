@@ -10,8 +10,11 @@ const app = express();
 app.use(cors({
   origin: [
     "http://localhost:3000",
-    "https://abyss-chat.vercel.app"
-  ]
+    "http://localhost:3001",
+    "https://abyss-chat.vercel.app",
+    "https://abyss-chat.vercel.app/"  // Added trailing slash
+  ],
+  credentials: true
 }));
 
 // Rate limiting
@@ -21,12 +24,14 @@ const limiter = rateLimit({
 });
 app.use(limiter);
 
-const server = createServer(app);
+const server = http.createServer(app);
 const io = new Server(server, { 
   cors: {
     origin: [
-      "http://localhost:3000",           // for local development
-      "https://abyss-chat.vercel.app"    // your Vercel frontend URL
+      "http://localhost:3000",
+      "http://localhost:3001",
+      "https://abyss-chat.vercel.app",
+      "https://abyss-chat.vercel.app/"  // Added trailing slash
     ],
     methods: ["GET", "POST"],
     credentials: true
@@ -200,4 +205,3 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`Socket server running on port ${PORT}`);
 });
-
