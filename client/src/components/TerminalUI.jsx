@@ -108,7 +108,7 @@ export default function TerminalUI({ username, room }) {
   };
 
   return (
-    <div className="bg-black text-green-500 font-mono h-screen p-4 flex flex-col">
+    <div className="bg-black text-green-500 font-mono h-screen p-4 flex flex-col overflow-hidden">
       {/* Header */}
       <div className="border-b border-green-500 pb-2 mb-4">
         <div className="flex justify-between items-center">

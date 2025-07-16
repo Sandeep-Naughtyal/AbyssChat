@@ -7,12 +7,16 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const app = express();
+
+// CORS configuration for Express
 app.use(cors({
   origin: [
     "http://localhost:3000",
     "http://localhost:3001",
+    "http://localhost:5173",      // Common Vite port
+    "http://localhost:5174",      // Alternative Vite port
     "https://abyss-chat.vercel.app",
-    "https://abyss-chat.vercel.app/"  // Added trailing slash
+    "https://abyss-chat.vercel.app/"
   ],
   credentials: true
 }));
@@ -25,13 +29,17 @@ const limiter = rateLimit({
 app.use(limiter);
 
 const server = http.createServer(app);
+
+// Socket.io configuration with CORS
 const io = new Server(server, { 
   cors: {
     origin: [
       "http://localhost:3000",
       "http://localhost:3001",
+      "http://localhost:5173",      // Common Vite port
+      "http://localhost:5174",      // Alternative Vite port
       "https://abyss-chat.vercel.app",
-      "https://abyss-chat.vercel.app/"  // Added trailing slash
+      "https://abyss-chat.vercel.app/"
     ],
     methods: ["GET", "POST"],
     credentials: true
@@ -65,6 +73,7 @@ const cleanupRoom = (room) => {
   }
 };
 
+// Socket.io connection handling
 io.on('connection', (socket) => {
   console.log(`User connected: ${socket.id}`);
 

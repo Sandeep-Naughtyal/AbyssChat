@@ -31,7 +31,7 @@ export default function RoomForm() {
   };
 
   return (
-    <div className="text-center p-10 text-green-500 font-mono bg-black h-screen flex flex-col items-center justify-center">
+    <div className="text-center p-10 text-green-500 font-mono bg-black h-screen flex flex-col items-center overflow-hidden justify-center">
       <div className="border border-green-500 p-8 max-w-md">
         <h1 className="text-3xl mb-6 text-lime-400">AbyssChat</h1>
         <div className="text-left mb-6 text-sm text-gray-400">
