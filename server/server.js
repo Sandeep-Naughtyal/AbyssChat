@@ -31,7 +31,7 @@ app.use(limiter);
 const server = http.createServer(app);
 
 // Socket.io configuration with CORS
-const io = new Server(server, { 
+const io = new Server(server, {
   cors: {
     origin: [
       "http://localhost:3000",
@@ -51,10 +51,38 @@ const io = new Server(server, {
 const rooms = new Map();
 const userRooms = new Map(); // Track which room each socket is in
 
-// Helper functions
+// Helper function to sanitize messages
 const sanitizeMessage = (msg) => {
-  return msg.replace(/[<>]/g, '').substring(0, 500);
+  // Trim whitespace
+  let cleanedMsg = msg.trim();
+
+  // Basic check for empty messages after trimming
+  if (!cleanedMsg) {
+    return '';
+  }
+
+  const MAX_MESSAGE_LENGTH = 20000; // Updated max length to 20,000
+
+  // Enforce max length
+  if (cleanedMsg.length > MAX_MESSAGE_LENGTH) {
+    cleanedMsg = cleanedMsg.substring(0, MAX_MESSAGE_LENGTH);
+  }
+
+  if (cleanedMsg.startsWith('```') && cleanedMsg.endsWith('```')) {
+    return cleanedMsg.replace(/<\s*script[^>]*>.*?<\s*\/\s*script\s*>/gim, '') // Remove script tags
+                     .replace(/<\s*img[^>]*>/gim, '') // Remove image tags
+                     .replace(/<\s*iframe[^>]*>.*?<\s*\/\s*iframe\s*>/gim, ''); // Remove iframe tags
+  } else {
+    // For regular messages, replace HTML specific characters to prevent XSS
+    return cleanedMsg
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  }
 };
+
 
 const getRoomUsers = (room) => {
   return rooms.get(room) || new Map();
@@ -91,27 +119,27 @@ io.on('connection', (socket) => {
 
       // Join new room
       socket.join(room);
-      
+
       // Initialize room if it doesn't exist
       if (!rooms.has(room)) {
         rooms.set(room, new Map());
       }
-      
+
       // Add user to room
       const roomUsers = getRoomUsers(room);
       roomUsers.set(socket.id, { username, isTyping: false });
       userRooms.set(socket.id, room);
-      
+
       // Notify others and update count
-      socket.to(room).emit('message', { 
-        user: 'System', 
-        text: `${username} joined the room` 
+      socket.to(room).emit('message', {
+        user: 'System',
+        text: `${username} joined the room`
       });
-      
+
       updateUserCount(room);
-      
+
       console.log(`${username} joined room ${room}`);
-      
+
     } catch (error) {
       console.error('Error joining room:', error);
       socket.emit('error', 'Failed to join room');
@@ -122,16 +150,16 @@ io.on('connection', (socket) => {
     try {
       const room = userRooms.get(socket.id);
       if (!room) return;
-      
+
       const roomUsers = getRoomUsers(room);
       const user = roomUsers.get(socket.id);
       if (!user) return;
-      
-      const sanitizedMsg = sanitizeMessage(msg);
+
+      const sanitizedMsg = sanitizeMessage(msg); // Use the updated sanitizeMessage
       if (sanitizedMsg.trim()) {
-        io.to(room).emit('message', { 
-          user: user.username, 
-          text: sanitizedMsg 
+        io.to(room).emit('message', {
+          user: user.username,
+          text: sanitizedMsg
         });
       }
     } catch (error) {
@@ -143,11 +171,11 @@ io.on('connection', (socket) => {
     try {
       const room = userRooms.get(socket.id);
       if (!room) return;
-      
+
       const roomUsers = getRoomUsers(room);
       const user = roomUsers.get(socket.id);
       if (!user) return;
-      
+
       user.isTyping = true;
       socket.to(room).emit('userTyping', { user: user.username, isTyping: true });
     } catch (error) {
@@ -159,11 +187,11 @@ io.on('connection', (socket) => {
     try {
       const room = userRooms.get(socket.id);
       if (!room) return;
-      
+
       const roomUsers = getRoomUsers(room);
       const user = roomUsers.get(socket.id);
       if (!user) return;
-      
+
       user.isTyping = false;
       socket.to(room).emit('userTyping', { user: user.username, isTyping: false });
     } catch (error) {
@@ -177,23 +205,23 @@ io.on('connection', (socket) => {
       if (room) {
         const roomUsers = getRoomUsers(room);
         const user = roomUsers.get(socket.id);
-        
+
         if (user) {
           // Notify others
-          socket.to(room).emit('message', { 
-            user: 'System', 
-            text: `${user.username} left the room` 
+          socket.to(room).emit('message', {
+            user: 'System',
+            text: `${user.username} left the room`
           });
-          
+
           // Remove user from room
           roomUsers.delete(socket.id);
           updateUserCount(room);
           cleanupRoom(room);
         }
-        
+
         userRooms.delete(socket.id);
       }
-      
+
       console.log(`User disconnected: ${socket.id}`);
     } catch (error) {
       console.error('Error handling disconnect:', error);
