@@ -44,43 +44,59 @@ const io = new Server(server, {
     methods: ["GET", "POST"],
     credentials: true
   },
-  connectionStateRecovery: {}
+  connectionStateRecovery: {} // Enables connection state recovery
 });
 
 // Enhanced room management
 const rooms = new Map();
 const userRooms = new Map(); // Track which room each socket is in
 
-// Helper function to sanitize messages
+// Color palette for users (ensure good contrast) 
+const userColors = [
+  '#FF5733', // Red-orange
+  '#33FF57', // Bright Green
+  '#3357FF', // Bright Blue
+  '#FF33EE', // Pink-purple
+  '#FFBD33', // Orange
+  '#33FFEE', // Cyan
+  '#EE33FF', // Magenta
+  '#80FF33', // Lime Green
+  '#3380FF', // Sky Blue
+  '#FF3380'  // Rose
+];
+
+// Helper function to generate a short unique ID
+const generateUniqueId = () => Math.random().toString(36).substring(2, 6);
+
+// Helper function to sanitize messages (CRITICAL XSS FIX)
 const sanitizeMessage = (msg) => {
-  // Trim whitespace
   let cleanedMsg = msg.trim();
 
-  // Basic check for empty messages after trimming
   if (!cleanedMsg) {
     return '';
   }
 
-  const MAX_MESSAGE_LENGTH = 20000; // Updated max length to 20,000
-
-  // Enforce max length
+  const MAX_MESSAGE_LENGTH = 20000;
   if (cleanedMsg.length > MAX_MESSAGE_LENGTH) {
     cleanedMsg = cleanedMsg.substring(0, MAX_MESSAGE_LENGTH);
   }
 
-  if (cleanedMsg.startsWith('```') && cleanedMsg.endsWith('```')) {
-    return cleanedMsg.replace(/<\s*script[^>]*>.*?<\s*\/\s*script\s*>/gim, '') // Remove script tags
-                     .replace(/<\s*img[^>]*>/gim, '') // Remove image tags
-                     .replace(/<\s*iframe[^>]*>.*?<\s*\/\s*iframe\s*>/gim, ''); // Remove iframe tags
-  } else {
-    // For regular messages, replace HTML specific characters to prevent XSS
-    return cleanedMsg
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#039;");
+  //CRITICAL: ALWAYS replace HTML special characters to prevent XSS 
+  cleanedMsg = cleanedMsg
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+
+  // It specifically targets common script injection vectors if somehow the entity encoding fails or is bypassed.
+  if (cleanedMsg.startsWith('&amp;&amp;&amp;') && cleanedMsg.endsWith('&amp;&amp;&amp;')) { // Check for encoded backticks
+    cleanedMsg = cleanedMsg.replace(/&lt;s(?:cript|tyle).*?&gt;.*?&lt;\/(?:script|style).*?&gt;/gim, '') // Remove script/style tags (encoded)
+                     .replace(/&lt;img.*?&gt;/gim, '') // Remove image tags (encoded)
+                     .replace(/&lt;iframe.*?&gt;.*?&lt;\/iframe.*?&gt;/gim, ''); // Remove iframe tags (encoded)
   }
+
+  return cleanedMsg;
 };
 
 
@@ -125,20 +141,23 @@ io.on('connection', (socket) => {
         rooms.set(room, new Map());
       }
 
-      // Add user to room
+      // Add user to room with color and unique ID
       const roomUsers = getRoomUsers(room);
-      roomUsers.set(socket.id, { username, isTyping: false });
+      const userColor = userColors[Math.floor(Math.random() * userColors.length)]; // Random color
+      const uniqueId = generateUniqueId(); // Generate unique ID
+      roomUsers.set(socket.id, { username, color: userColor, uniqueId, isTyping: false });
       userRooms.set(socket.id, room);
 
       // Notify others and update count
       socket.to(room).emit('message', {
         user: 'System',
-        text: `${username} joined the room`
+        text: sanitizeMessage(`${username} joined the room`), // Sanitize system messages too
+        timestamp: new Date().toLocaleTimeString() // Add timestamp for consistency
       });
 
       updateUserCount(room);
 
-      console.log(`${username} joined room ${room}`);
+      console.log(`${username} (ID: ${uniqueId}) joined room ${room} with color ${userColor}`);
 
     } catch (error) {
       console.error('Error joining room:', error);
@@ -155,11 +174,14 @@ io.on('connection', (socket) => {
       const user = roomUsers.get(socket.id);
       if (!user) return;
 
-      const sanitizedMsg = sanitizeMessage(msg); // Use the updated sanitizeMessage
+      const sanitizedMsg = sanitizeMessage(msg);
       if (sanitizedMsg.trim()) {
         io.to(room).emit('message', {
           user: user.username,
-          text: sanitizedMsg
+          text: sanitizedMsg,
+          color: user.color, // Include user color
+          uniqueId: user.uniqueId, // Include unique ID
+          timestamp: new Date().toLocaleTimeString() // Add timestamp
         });
       }
     } catch (error) {
@@ -176,8 +198,10 @@ io.on('connection', (socket) => {
       const user = roomUsers.get(socket.id);
       if (!user) return;
 
-      user.isTyping = true;
-      socket.to(room).emit('userTyping', { user: user.username, isTyping: true });
+      if (!user.isTyping) { // Prevent redundant emits
+        user.isTyping = true;
+        socket.to(room).emit('userTyping', { user: user.username, isTyping: true, uniqueId: user.uniqueId });
+      }
     } catch (error) {
       console.error('Error handling typing:', error);
     }
@@ -192,8 +216,10 @@ io.on('connection', (socket) => {
       const user = roomUsers.get(socket.id);
       if (!user) return;
 
-      user.isTyping = false;
-      socket.to(room).emit('userTyping', { user: user.username, isTyping: false });
+      if (user.isTyping) { // Prevent redundant emits
+        user.isTyping = false;
+        socket.to(room).emit('userTyping', { user: user.username, isTyping: false, uniqueId: user.uniqueId });
+      }
     } catch (error) {
       console.error('Error handling stop typing:', error);
     }
@@ -210,7 +236,8 @@ io.on('connection', (socket) => {
           // Notify others
           socket.to(room).emit('message', {
             user: 'System',
-            text: `${user.username} left the room`
+            text: sanitizeMessage(`${user.username} left the room`), // Sanitize system message
+            timestamp: new Date().toLocaleTimeString() // Add timestamp
           });
 
           // Remove user from room
