@@ -12,7 +12,7 @@ export default function TerminalUI({ username, room }) {
   const typingTimeoutRef = useRef(null);
   const textareaRef = useRef(null);
   const isMobile = useRef(false);
-  const messagesContainerRef = useRef(null); // NEW: Ref for the messages scroll container
+  const messagesContainerRef = useRef(null);
 
   useEffect(() => {
     isMobile.current = /Mobi|Android/i.test(navigator.userAgent);
@@ -22,14 +22,11 @@ export default function TerminalUI({ username, room }) {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, []);
 
-  // Function to check if user is near the bottom
   const isScrolledToBottom = useCallback(() => {
     if (!messagesContainerRef.current) return false;
     const { scrollHeight, scrollTop, clientHeight } = messagesContainerRef.current;
-    // Allow a small buffer (e.g., 20px)
     return scrollHeight - scrollTop <= clientHeight + 20;
   }, []);
-
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -45,35 +42,27 @@ export default function TerminalUI({ username, room }) {
     }
   }, [input]);
 
-  // Existing useEffect for messages: Auto-scroll when new message arrives
   useEffect(() => {
     scrollToBottom();
   }, [messages, scrollToBottom]);
 
-  // Auto-scroll when typing users change, IF the user is near the bottom
   useEffect(() => {
-    if (isScrolledToBottom()) { // Only scroll if near bottom
+    if (isScrolledToBottom()) {
       scrollToBottom();
     }
-  }, [typingUsers, scrollToBottom, isScrolledToBottom]); // Trigger on typingUsers change
-
-
-  useEffect(() => {
-    const storedMessages = localStorage.getItem(`chat_history_${room}`);
-    if (storedMessages) {
-      setMessages(JSON.parse(storedMessages));
-    }
-  }, [room]);
+  }, [typingUsers, scrollToBottom, isScrolledToBottom]);
 
   useEffect(() => {
-    const messagesToStore = messages.slice(Math.max(messages.length - 200, 0));
-    localStorage.setItem(`chat_history_${room}`, JSON.stringify(messagesToStore));
-  }, [messages, room]);
-
-  useEffect(() => {
+    // Clear any existing localStorage for this room to prevent stale data
+    localStorage.removeItem(`chat_history_${room}`);
+    
+    // Clear any existing connection
     if (socket.connected) {
       socket.disconnect();
     }
+
+    // Start with empty messages - server will send history if room is active
+    setMessages([]);
 
     socket.connect();
 
@@ -207,7 +196,6 @@ export default function TerminalUI({ username, room }) {
     return <span className="break-all flex-1 min-w-0" dangerouslySetInnerHTML={{ __html: formattedTextWithBreaks }} />;
   };
 
-
   const handleSend = (e) => {
     e.preventDefault();
     const messageToSend = input.trim();
@@ -268,7 +256,6 @@ export default function TerminalUI({ username, room }) {
     scrollToBottom();
   };
 
-
   return (
     <div className="bg-black text-green-500 font-mono h-screen p-2 sm:p-4 flex flex-col overflow-hidden">
       <div className="border-b border-green-500 pb-2 mb-2 sm:mb-4 flex flex-col sm:flex-row justify-between items-center flex-shrink-0">
@@ -297,14 +284,12 @@ export default function TerminalUI({ username, room }) {
           </div>
         ))}
 
-        {/* Typing indicator */}
         {typingUsers.size > 0 && (
           <div className="text-gray-400 text-xs sm:text-sm italic" aria-live="polite">
             {Array.from(typingUsers).join(', ')} {typingUsers.size === 1 ? 'is' : 'are'} typing...
           </div>
         )}
 
-        {/* Ensure messagesEndRef is AFTER the typing indicator */}
         <div ref={messagesEndRef} />
       </div>
 
