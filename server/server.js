@@ -48,8 +48,8 @@ const io = new Server(server, {
   connectionStateRecovery: {}
 });
 
-// Room management - now includes message history
-const rooms = new Map(); // { roomId: { users: Map, messages: Array } }
+// Room management - now includes message history, encryption status, and room passwords
+const rooms = new Map(); // { roomId: { users: Map, messages: Array, isEncrypted: boolean, password: string, creator: string } }
 const userRooms = new Map();
 
 const userColors = [
@@ -84,15 +84,57 @@ const sanitizeMessage = (msg) => {
   return cleanedMsg;
 };
 
+// Validation for encrypted message data
+const isValidEncryptedMessage = (msgData) => {
+  return (
+    msgData &&
+    typeof msgData === 'object' &&
+    Array.isArray(msgData.encrypted) &&
+    Array.isArray(msgData.iv) &&
+    msgData.encrypted.length > 0 &&
+    msgData.iv.length === 12 // AES-GCM IV should be 12 bytes
+  );
+};
+
 const getRoomData = (room) => {
   if (!rooms.has(room)) {
-    rooms.set(room, { users: new Map(), messages: [] });
+    rooms.set(room, { 
+      users: new Map(), 
+      messages: [], 
+      isEncrypted: true, // All rooms are encrypted by default now
+      password: null,    // Will be set when room is created
+      creator: null      // Will be set when room is created
+    });
   }
   return rooms.get(room);
 };
 
 const getRoomUsers = (room) => getRoomData(room).users;
 const getRoomMessages = (room) => getRoomData(room).messages;
+const isRoomEncrypted = (room) => getRoomData(room).isEncrypted;
+const setRoomEncrypted = (room) => {
+  const roomData = getRoomData(room);
+  roomData.isEncrypted = true;
+};
+
+// NEW: Room password management functions
+const setRoomPassword = (room, password, creator) => {
+  const roomData = getRoomData(room);
+  roomData.password = password;
+  roomData.creator = creator;
+  roomData.isEncrypted = true; // Ensure encryption is enabled
+};
+
+const validateRoomPassword = (room, password) => {
+  const roomData = rooms.get(room);
+  if (!roomData) return false;
+  return roomData.password === password;
+};
+
+const isRoomPasswordProtected = (room) => {
+  const roomData = rooms.get(room);
+  return roomData && roomData.password !== null;
+};
 
 const addMessageToRoom = (room, message) => {
   const roomData = getRoomData(room);
@@ -117,11 +159,13 @@ const cleanupRoom = (room) => {
   }
 };
 
+const getCurrentTimestamp = () => new Date().toLocaleTimeString();
+
 // Socket.io connection handling
 io.on('connection', (socket) => {
   console.log(`User connected: ${socket.id}`);
 
-  const handleRoomOperations = (room, username, action) => {
+  const handleRoomOperations = (room, username, password, action) => {
     try {
       // Leave previous room if any
       const previousRoom = userRooms.get(socket.id);
@@ -134,6 +178,26 @@ io.on('connection', (socket) => {
       }
 
       if (action === 'join') {
+        // Check if room exists and if password is required
+        const roomExists = rooms.has(room);
+        
+        if (roomExists) {
+          // Room exists - validate password
+          if (!validateRoomPassword(room, password)) {
+            socket.emit('error', 'Incorrect room password');
+            return;
+          }
+        } else {
+          // Room doesn't exist - user is creating it
+          if (!password || password.trim().length === 0) {
+            socket.emit('error', 'Password required to create room');
+            return;
+          }
+          // Create room with password
+          setRoomPassword(room, password.trim(), username);
+          console.log(`New room ${room} created by ${username} with password protection`);
+        }
+
         socket.join(room);
 
         const roomUsers = getRoomUsers(room);
@@ -159,18 +223,30 @@ io.on('connection', (socket) => {
           });
         }
 
+        // Notify client that room is encrypted (all rooms are now encrypted)
+        socket.emit('roomEncrypted');
+
         // Notify others about new user
         const joinMessage = {
           user: 'System',
           text: sanitizeMessage(`${username} joined the room`),
-          timestamp: new Date().toLocaleTimeString()
+          timestamp: getCurrentTimestamp(),
+          isEncrypted: false
         };
 
         socket.to(room).emit('message', joinMessage);
         addMessageToRoom(room, joinMessage);
 
         updateUserCount(room);
+        
         console.log(`${username} (ID: ${uniqueId}) joined room ${room} with color ${userColor}`);
+        
+        // Send success confirmation to the user - MUST be after all setup
+        socket.emit('joinSuccess', { 
+          room, 
+          isCreator: !roomExists,
+          message: roomExists ? 'Joined room successfully' : 'Room created successfully'
+        });
       }
     } catch (error) {
       console.error(`Error during ${action} room operation:`, error);
@@ -178,11 +254,13 @@ io.on('connection', (socket) => {
     }
   };
 
-  socket.on('joinRoom', ({ room, username }) => {
-    handleRoomOperations(room, username, 'join');
+  // UPDATED: Now requires password
+  socket.on('joinRoom', ({ room, username, password }) => {
+    handleRoomOperations(room, username, password, 'join');
   });
 
-  socket.on('sendMessage', (msg) => {
+  // Handle both encrypted and plain text messages (unchanged)
+  socket.on('sendMessage', (msgData) => {
     try {
       const room = userRooms.get(socket.id);
       if (!room) return;
@@ -191,21 +269,50 @@ io.on('connection', (socket) => {
       const user = roomUsers.get(socket.id);
       if (!user) return;
 
-      const sanitizedMsg = sanitizeMessage(msg);
-      if (sanitizedMsg.trim()) {
-        const message = {
+      let messageToSend;
+
+      // Check if this is an encrypted message
+      if (isValidEncryptedMessage(msgData)) {
+        // Handle encrypted message - forward encrypted data as-is
+        messageToSend = {
+          user: user.username,
+          encrypted: msgData.encrypted,
+          iv: msgData.iv,
+          color: user.color,
+          uniqueId: user.uniqueId,
+          timestamp: getCurrentTimestamp(),
+          isEncrypted: true
+        };
+
+        console.log(`Encrypted message from ${user.username} in room ${room}`);
+      } else {
+        // Handle plain text message (backward compatibility)
+        const plainTextMsg = typeof msgData === 'string' ? msgData : '';
+        const sanitizedMsg = sanitizeMessage(plainTextMsg);
+        
+        if (!sanitizedMsg.trim()) return;
+
+        messageToSend = {
           user: user.username,
           text: sanitizedMsg,
           color: user.color,
           uniqueId: user.uniqueId,
-          timestamp: new Date().toLocaleTimeString()
+          timestamp: getCurrentTimestamp(),
+          isEncrypted: false
         };
 
-        io.to(room).emit('message', message);
-        addMessageToRoom(room, message); // Store message in room history
+        console.log(`Plain text message from ${user.username} in room ${room}: ${sanitizedMsg.substring(0, 50)}...`);
       }
+
+      // Broadcast message to all users in the room
+      io.to(room).emit('message', messageToSend);
+      
+      // Store message in room history
+      addMessageToRoom(room, messageToSend);
+
     } catch (error) {
       console.error('Error sending message:', error);
+      socket.emit('error', 'Failed to send message');
     }
   });
 
@@ -243,7 +350,8 @@ io.on('connection', (socket) => {
           const leaveMessage = {
             user: 'System',
             text: sanitizeMessage(`${user.username} left the room`),
-            timestamp: new Date().toLocaleTimeString()
+            timestamp: getCurrentTimestamp(),
+            isEncrypted: false
           };
 
           socket.to(room).emit('message', leaveMessage);

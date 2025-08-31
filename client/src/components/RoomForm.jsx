@@ -10,7 +10,6 @@ export default function RoomForm() {
     setIsLoading(true);
     const roomCode = Math.random().toString(36).substring(2, 8).toUpperCase();
     
-    // Simulate room creation delay
     setTimeout(() => {
       navigate(`/room/${roomCode}`);
       setIsLoading(false);
